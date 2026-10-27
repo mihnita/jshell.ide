@@ -115,6 +115,34 @@ public class JShellEngineTest {
     }
 
     @Test
+    public void testCompletionsSupportCaseInsensitiveSubstringMatch() {
+        String setup = "import java.text.DateFormat;\n";
+        engine.evaluateScratchpad(setup);
+
+        String codeWithTime = setup + "DateFormat.time";
+        CompletionResult timeResult =
+                engine.getCompletions(codeWithTime, codeWithTime.length());
+        assertEquals(codeWithTime.indexOf("time"), timeResult.getAnchorOffset());
+        assertTrue(
+                "Expected 'getTimeInstance' when typing 'DateFormat.time'",
+                timeResult.getSuggestions().stream().anyMatch(s -> s.startsWith("getTimeInstance")));
+        assertTrue(
+                "Expected 'getDateTimeInstance' when typing 'DateFormat.time'",
+                timeResult.getSuggestions().stream().anyMatch(s -> s.startsWith("getDateTimeInstance")));
+
+        String codeWithInst = setup + "DateFormat.inst";
+        CompletionResult instResult =
+                engine.getCompletions(codeWithInst, codeWithInst.length());
+        assertEquals(codeWithInst.indexOf("inst"), instResult.getAnchorOffset());
+        assertTrue(
+                "Expected 'getDateInstance' when typing 'DateFormat.inst'",
+                instResult.getSuggestions().stream().anyMatch(s -> s.startsWith("getDateInstance")));
+        assertTrue(
+                "Expected 'getInstance' when typing 'DateFormat.inst'",
+                instResult.getSuggestions().stream().anyMatch(s -> s.startsWith("getInstance")));
+    }
+
+    @Test
     public void testDepsDirectiveResolvesAndDoesNotMutateDialogClasspath() {
         String codeWithDeps = """
                 //DEPS junit:junit:4.13.2

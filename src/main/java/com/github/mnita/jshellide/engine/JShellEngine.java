@@ -599,22 +599,76 @@ public class JShellEngine implements AutoCloseable {
         String snippetPrefix = fullText.substring(snippetStart);
         int relativeCursor = safeCursor - snippetStart;
 
-        int[] anchor = new int[] {-1};
-        List<Suggestion> rawSuggestions =
-                analysis.completionSuggestions(snippetPrefix, relativeCursor, anchor);
+        int tokenStart = relativeCursor;
+        while (tokenStart > 0
+                && Character.isJavaIdentifierPart(snippetPrefix.charAt(tokenStart - 1))) {
+            tokenStart--;
+        }
+        String typedFilter = snippetPrefix.substring(tokenStart, relativeCursor);
+        String filterLower = typedFilter.toLowerCase(Locale.ROOT);
 
-        Set<String> uniqueMatches = new LinkedHashSet<>();
-        List<Suggestion> sorted = new ArrayList<>(rawSuggestions);
-        sorted.sort(Comparator.comparing(Suggestion::matchesType).reversed()
-                .thenComparing(Suggestion::continuation));
-        for (Suggestion s : sorted) {
+        List<Suggestion> candidates = new ArrayList<>();
+        int[] anchor = new int[] {-1};
+
+        if (tokenStart < relativeCursor) {
+            String prefixAtTokenStart =
+                    snippetPrefix.substring(0, tokenStart) + snippetPrefix.substring(relativeCursor);
+            int[] baseAnchor = new int[] {-1};
+            List<Suggestion> baseSuggestions =
+                    analysis.completionSuggestions(prefixAtTokenStart, tokenStart, baseAnchor);
+            if (!baseSuggestions.isEmpty()) {
+                candidates.addAll(baseSuggestions);
+                anchor[0] = tokenStart;
+            }
+            int[] directAnchor = new int[] {-1};
+            List<Suggestion> directSuggestions =
+                    analysis.completionSuggestions(snippetPrefix, relativeCursor, directAnchor);
+            if (directAnchor[0] == tokenStart || candidates.isEmpty()) {
+                candidates.addAll(directSuggestions);
+                if (anchor[0] < 0) {
+                    anchor[0] = directAnchor[0];
+                }
+            }
+        } else {
+            candidates.addAll(
+                    analysis.completionSuggestions(snippetPrefix, relativeCursor, anchor));
+        }
+
+        List<Suggestion> filtered = new ArrayList<>();
+        for (Suggestion s : candidates) {
             String cont = s.continuation();
-            if (cont != null && !cont.isEmpty()) {
-                uniqueMatches.add(cont);
+            if (cont == null || cont.isEmpty()) {
+                continue;
+            }
+            if (filterLower.isEmpty() || cont.toLowerCase(Locale.ROOT).contains(filterLower)) {
+                filtered.add(s);
             }
         }
 
-        int absoluteAnchor = (anchor[0] >= 0) ? (snippetStart + anchor[0]) : safeCursor;
+        filtered.sort(
+                Comparator.comparing((Suggestion s) ->
+                                !filterLower.isEmpty() && s.continuation().startsWith(typedFilter))
+                        .reversed()
+                        .thenComparing(
+                                (Suggestion s) ->
+                                        !filterLower.isEmpty()
+                                                && s.continuation()
+                                                        .toLowerCase(Locale.ROOT)
+                                                        .startsWith(filterLower),
+                                Comparator.reverseOrder())
+                        .thenComparing(Suggestion::matchesType, Comparator.reverseOrder())
+                        .thenComparing(Suggestion::continuation, String.CASE_INSENSITIVE_ORDER)
+                        .thenComparing(Suggestion::continuation));
+
+        Set<String> uniqueMatches = new LinkedHashSet<>();
+        for (Suggestion s : filtered) {
+            uniqueMatches.add(s.continuation());
+        }
+
+        int resolvedRelAnchor = (tokenStart < relativeCursor)
+                ? tokenStart
+                : (anchor[0] >= 0 ? anchor[0] : relativeCursor);
+        int absoluteAnchor = snippetStart + resolvedRelAnchor;
         return new CompletionResult(absoluteAnchor, new ArrayList<>(uniqueMatches));
     }
 
