@@ -85,6 +85,29 @@ public class MavenDependencyResolver {
     }
 
     /**
+     * Checks whether the primary artifact for the given Maven coordinate is already
+     * downloaded in the local Maven repository ({@code ~/.m2/repository}) without
+     * making any network requests.
+     */
+    public boolean isCoordinateDownloaded(String coordinate) {
+        if (!isValidCoordinate(coordinate)) {
+            return false;
+        }
+        try {
+            Artifact artifact = new DefaultArtifact(coordinate.trim());
+            DefaultRepositorySystemSession session = newSession();
+            String relativePath = session.getLocalRepositoryManager().getPathForLocalArtifact(artifact);
+            if (relativePath == null || relativePath.isBlank()) {
+                return false;
+            }
+            File localFile = new File(localRepoDir, relativePath);
+            return localFile.isFile();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * Resolves a single Maven coordinate (and its transitive runtime dependencies)
      * and returns the absolute file paths of all resolved JARs.
      */

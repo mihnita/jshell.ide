@@ -67,7 +67,6 @@ public class MainWindow {
     private final Path keyBindingsFile;
     private final Path settingsFile;
 
-    private final List<String> mavenCoordinates = new ArrayList<>();
     private final Map<ActionId, MenuItem> actionMenuItems = new EnumMap<>(ActionId.class);
 
     private StyledText editorText;
@@ -137,6 +136,9 @@ public class MainWindow {
         } catch (IOException ignored) {
             // Use defaults if file cannot be read
         }
+
+        // Restore previously active classpath entries into JShell on startup
+        this.engine.setClasspathEntries(this.editorSettings.getActiveClasspathEntries());
 
         initResources();
         buildUi();
@@ -780,12 +782,19 @@ public class MainWindow {
         ClasspathDialog dialog = new ClasspathDialog(
                 shell,
                 mavenResolver,
-                engine.getClasspathEntries(),
-                mavenCoordinates);
+                editorSettings.getMavenCoordinates(),
+                editorSettings.getClasspathEntries(),
+                editorSettings.getActiveClasspathEntries());
         if (dialog.open()) {
-            mavenCoordinates.clear();
-            mavenCoordinates.addAll(dialog.getMavenCoordinates());
-            engine.setClasspathEntries(dialog.getClasspathEntries());
+            editorSettings.setMavenCoordinates(dialog.getMavenCoordinates());
+            editorSettings.setClasspathEntries(dialog.getClasspathEntries());
+            editorSettings.setActiveClasspathEntries(dialog.getActiveClasspathEntries());
+            engine.setClasspathEntries(dialog.getActiveClasspathEntries());
+            try {
+                editorSettings.saveToFile(settingsFile);
+            } catch (IOException ignored) {
+                // Non-fatal if saving fails
+            }
             scheduleEvaluation(0);
         }
     }

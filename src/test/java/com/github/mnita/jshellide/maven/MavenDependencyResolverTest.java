@@ -22,6 +22,14 @@ public class MavenDependencyResolverTest {
     }
 
     @Test
+    public void testIsCoordinateDownloaded() {
+        MavenDependencyResolver resolver = new MavenDependencyResolver();
+        assertTrue(resolver.isCoordinateDownloaded("junit:junit:4.13.2"));
+        assertFalse(resolver.isCoordinateDownloaded("com.example.nonexistent:missing-artifact:9.9.9"));
+        assertFalse(resolver.isCoordinateDownloaded("invalid"));
+    }
+
+    @Test
     public void testResolveArtifactAndUseInJShellEngine() throws Exception {
         MavenDependencyResolver resolver = new MavenDependencyResolver();
         List<String> jars = resolver.resolveCoordinate("junit:junit:4.13.2");

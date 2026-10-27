@@ -7,7 +7,12 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.graphics.FontData;
 
@@ -23,12 +28,18 @@ public class EditorSettings {
     private static final String KEY_FONT_SIZE = "editor.font.size";
     private static final String KEY_FONT_STYLE = "editor.font.style";
     private static final String KEY_THEME_NAME = "editor.theme";
+    private static final String KEY_MAVEN_DEPENDENCIES = "maven.dependencies";
+    private static final String KEY_CLASSPATH_ENTRIES = "classpath.entries";
+    private static final String KEY_CLASSPATH_ACTIVE = "classpath.active";
 
     private final Path configDir;
     private String fontName;
     private int fontSize;
     private int fontStyle;
     private String themeName;
+    private final List<String> mavenCoordinates = new ArrayList<>();
+    private final List<String> classpathEntries = new ArrayList<>();
+    private final List<String> activeClasspathEntries = new ArrayList<>();
 
     public EditorSettings() {
         this(defaultConfigDir());
@@ -227,12 +238,39 @@ public class EditorSettings {
         return TextMateTheme.loadBundledDefault();
     }
 
+    public List<String> getMavenCoordinates() {
+        return Collections.unmodifiableList(new ArrayList<>(mavenCoordinates));
+    }
+
+    public void setMavenCoordinates(List<String> coords) {
+        copyUniqueNonBlank(coords, this.mavenCoordinates);
+    }
+
+    public List<String> getClasspathEntries() {
+        return Collections.unmodifiableList(new ArrayList<>(classpathEntries));
+    }
+
+    public void setClasspathEntries(List<String> entries) {
+        copyUniqueNonBlank(entries, this.classpathEntries);
+    }
+
+    public List<String> getActiveClasspathEntries() {
+        return Collections.unmodifiableList(new ArrayList<>(activeClasspathEntries));
+    }
+
+    public void setActiveClasspathEntries(List<String> activeEntries) {
+        copyUniqueNonBlank(activeEntries, this.activeClasspathEntries);
+    }
+
     public Properties toProperties() {
         Properties props = new Properties();
         props.setProperty(KEY_FONT_NAME, fontName);
         props.setProperty(KEY_FONT_SIZE, Integer.toString(fontSize));
         props.setProperty(KEY_FONT_STYLE, Integer.toString(fontStyle));
         props.setProperty(KEY_THEME_NAME, themeName);
+        props.setProperty(KEY_MAVEN_DEPENDENCIES, String.join("\n", mavenCoordinates));
+        props.setProperty(KEY_CLASSPATH_ENTRIES, String.join("\n", classpathEntries));
+        props.setProperty(KEY_CLASSPATH_ACTIVE, String.join("\n", activeClasspathEntries));
         return props;
     }
 
@@ -264,6 +302,46 @@ public class EditorSettings {
         if (theme != null) {
             setThemeName(theme);
         }
+        String mavenStr = props.getProperty(KEY_MAVEN_DEPENDENCIES);
+        if (mavenStr != null) {
+            setMavenCoordinates(parseLinesList(mavenStr));
+        }
+        String cpEntriesStr = props.getProperty(KEY_CLASSPATH_ENTRIES);
+        if (cpEntriesStr != null) {
+            setClasspathEntries(parseLinesList(cpEntriesStr));
+        }
+        String cpActiveStr = props.getProperty(KEY_CLASSPATH_ACTIVE);
+        if (cpActiveStr != null) {
+            setActiveClasspathEntries(parseLinesList(cpActiveStr));
+        }
+    }
+
+    private static List<String> parseLinesList(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Collections.emptyList();
+        }
+        List<String> list = new ArrayList<>();
+        for (String line : raw.split("\n")) {
+            String trimmed = line.trim();
+            if (!trimmed.isEmpty()) {
+                list.add(trimmed);
+            }
+        }
+        return list;
+    }
+
+    private static void copyUniqueNonBlank(List<String> source, List<String> target) {
+        target.clear();
+        if (source == null) {
+            return;
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        for (String item : source) {
+            if (item != null && !item.isBlank()) {
+                seen.add(item.trim());
+            }
+        }
+        target.addAll(seen);
     }
 
     public void saveToFile(Path path) throws IOException {

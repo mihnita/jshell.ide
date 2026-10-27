@@ -5,11 +5,13 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.github.mnita.jshellide.theme.TextMateTheme;
+import com.github.mnita.jshellide.ui.ClasspathDialog;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.List;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.graphics.FontData;
 import org.junit.Test;
@@ -107,6 +109,37 @@ public class EditorSettingsTest {
             EditorSettings.saveContentToFile(cliFile, savedCode);
             assertTrue(Files.isRegularFile(cliFile));
             assertEquals(savedCode, settings.loadInitialContent(cliFile));
+        } finally {
+            deleteRecursively(tempDir);
+        }
+    }
+
+    @Test
+    public void testSaveAndLoadDependenciesAndClasspathState() throws Exception {
+        Path tempDir = Files.createTempDirectory("jshell-ide-deps-test");
+        try {
+            EditorSettings s1 = new EditorSettings(tempDir);
+            s1.setMavenCoordinates(List.of("junit:junit:4.13.2", "com.google.code.gson:gson:2.11.0"));
+            s1.setClasspathEntries(List.of("/tmp/a.jar", "/tmp/b.jar", "/tmp/classes"));
+            s1.setActiveClasspathEntries(List.of("/tmp/a.jar", "/tmp/classes"));
+            s1.saveToFile(s1.getSettingsFile());
+
+            EditorSettings s2 = new EditorSettings(tempDir);
+            s2.loadFromFile(s2.getSettingsFile());
+            assertEquals(
+                    List.of("junit:junit:4.13.2", "com.google.code.gson:gson:2.11.0"),
+                    s2.getMavenCoordinates());
+            assertEquals(
+                    List.of("/tmp/a.jar", "/tmp/b.jar", "/tmp/classes"),
+                    s2.getClasspathEntries());
+            assertEquals(
+                    List.of("/tmp/a.jar", "/tmp/classes"),
+                    s2.getActiveClasspathEntries());
+
+            assertEquals("[✓] /tmp/a.jar", ClasspathDialog.formatListItem(true, "/tmp/a.jar"));
+            assertEquals("[ ] /tmp/b.jar", ClasspathDialog.formatListItem(false, "/tmp/b.jar"));
+            assertEquals("/tmp/a.jar", ClasspathDialog.stripMarker("[✓] /tmp/a.jar"));
+            assertEquals("/tmp/b.jar", ClasspathDialog.stripMarker("[ ] /tmp/b.jar"));
         } finally {
             deleteRecursively(tempDir);
         }
