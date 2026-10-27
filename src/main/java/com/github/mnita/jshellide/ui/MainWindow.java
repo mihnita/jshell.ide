@@ -112,12 +112,12 @@ public class MainWindow {
     public MainWindow(Display display, Path initialFile) {
         this.display = display;
         this.shell = new Shell(display);
-        this.engine = new JShellEngine();
+        this.mavenResolver = new MavenDependencyResolver();
+        this.engine = new JShellEngine(this.mavenResolver);
         this.highlighter = new JavaSyntaxHighlighter();
         this.undoRedoManager = new UndoRedoManager();
         this.editorSettings = new EditorSettings();
         this.keyManager = new KeyBindingManager();
-        this.mavenResolver = new MavenDependencyResolver();
         this.keyBindingsFile = editorSettings.getKeyBindingsFile();
         this.settingsFile = editorSettings.getSettingsFile();
         if (initialFile != null) {
@@ -423,6 +423,8 @@ public class MainWindow {
             refreshSyntaxAndSquiggles();
             if (liveEvaluationEnabled) {
                 scheduleEvaluation(LIVE_EVAL_DEBOUNCE_MS);
+            } else {
+                scheduleDepsUpdate(LIVE_EVAL_DEBOUNCE_MS);
             }
         });
 
@@ -607,6 +609,33 @@ public class MainWindow {
                     currentDiagnostics = result.getDiagnostics();
                     refreshSyntaxAndSquiggles();
                     renderEvaluationOutput(result);
+                });
+            });
+        });
+    }
+
+    private void scheduleDepsUpdate(int delayMs) {
+        long gen = evaluationGeneration.incrementAndGet();
+        display.timerExec(delayMs, () -> {
+            if (shell.isDisposed() || evaluationGeneration.get() != gen) {
+                return;
+            }
+            String codeSnapshot = editorText.getText();
+            evalExecutor.submit(() -> {
+                if (evaluationGeneration.get() != gen) {
+                    return;
+                }
+                boolean changed = engine.updateDepsFromSource(codeSnapshot);
+                if (!changed || evaluationGeneration.get() != gen) {
+                    return;
+                }
+                display.asyncExec(() -> {
+                    if (shell.isDisposed() || evaluationGeneration.get() != gen) {
+                        return;
+                    }
+                    statusLabel.setText(
+                            "Updated //DEPS classpath | Classpath entries: "
+                                    + engine.getClasspathEntries().size());
                 });
             });
         });

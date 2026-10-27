@@ -113,4 +113,85 @@ public class JShellEngineTest {
                 "Expected completion suggestions to include 'customGreeting'",
                 completions.getSuggestions().stream().anyMatch(s -> s.contains("customGreeting")));
     }
+
+    @Test
+    public void testDepsDirectiveResolvesAndDoesNotMutateDialogClasspath() {
+        String codeWithDeps = """
+                //DEPS junit:junit:4.13.2
+                import org.junit.Assert;
+                Assert.assertEquals(10, 5 + 5);
+                "deps-ok"
+                """;
+        EvaluationResult result = engine.evaluateScratchpad(codeWithDeps);
+        assertTrue("Expected no diagnostics when //DEPS resolves cleanly", result.getDiagnostics().isEmpty());
+        assertEquals(3, result.getSnippetResults().size());
+        assertEquals("\"deps-ok\"", result.getSnippetResults().get(2).getValue());
+        assertFalse(
+                "Effective classpath should include resolved //DEPS JARs",
+                engine.getClasspathEntries().isEmpty());
+        assertTrue(
+                "//DEPS must not be added to dialog classpath entries",
+                engine.getDialogClasspathEntries().isEmpty());
+    }
+
+    @Test
+    public void testIncrementalDepsCachingAndClasspathUpdatesOnEdit() {
+        engine.setClasspathEntries(List.of("/dialog/configured.jar"));
+        assertEquals(0, engine.getDepsResolutionCount());
+
+        String firstEdit = """
+                //DEPS org.hamcrest:hamcrest-core:1.3
+                int a = 1;
+                """;
+        assertTrue(engine.updateDepsFromSource(firstEdit));
+        assertEquals(1, engine.getDepsResolutionCount());
+        assertTrue(engine.getClasspathEntries().contains("/dialog/configured.jar"));
+        assertTrue(engine.getClasspathEntries().stream().anyMatch(p -> p.contains("hamcrest-core-1.3.jar")));
+
+        // Editing non-DEPS code should not trigger any //DEPS work
+        String secondEditSameDeps = """
+                //DEPS org.hamcrest:hamcrest-core:1.3
+                int a = 2;
+                int b = 3;
+                """;
+        assertFalse(engine.updateDepsFromSource(secondEditSameDeps));
+        assertEquals(1, engine.getDepsResolutionCount());
+
+        // Adding a second //DEPS coordinate should resolve ONLY the new coordinate
+        String thirdEditAddedDep = """
+                //DEPS org.hamcrest:hamcrest-core:1.3
+                //DEPS junit:junit:4.13.2
+                int a = 2;
+                """;
+        assertTrue(engine.updateDepsFromSource(thirdEditAddedDep));
+        assertEquals(2, engine.getDepsResolutionCount());
+        assertTrue(engine.getClasspathEntries().contains("/dialog/configured.jar"));
+        assertTrue(engine.getClasspathEntries().stream().anyMatch(p -> p.contains("hamcrest-core-1.3.jar")));
+        assertTrue(engine.getClasspathEntries().stream().anyMatch(p -> p.contains("junit-4.13.2.jar")));
+
+        // Removing junit from //DEPS should remove junit JAR from effective classpath without re-resolving hamcrest
+        String fourthEditRemovedDep = """
+                //DEPS org.hamcrest:hamcrest-core:1.3
+                int a = 2;
+                """;
+        assertTrue(engine.updateDepsFromSource(fourthEditRemovedDep));
+        assertEquals(2, engine.getDepsResolutionCount());
+        assertTrue(engine.getClasspathEntries().contains("/dialog/configured.jar"));
+        assertTrue(engine.getClasspathEntries().stream().anyMatch(p -> p.contains("hamcrest-core-1.3.jar")));
+        assertFalse(engine.getClasspathEntries().stream().anyMatch(p -> p.contains("junit-4.13.2.jar")));
+        assertEquals(List.of("/dialog/configured.jar"), engine.getDialogClasspathEntries());
+    }
+
+    @Test
+    public void testInvalidDepsDirectiveEmitsDiagnosticAtTokenOffset() {
+        String code = "//DEPS not-a-valid-coord\nint x = 1;\n";
+        EvaluationResult result = engine.evaluateScratchpad(code);
+        List<DiagnosticItem> diags = result.getDiagnostics();
+        assertEquals(1, diags.size());
+        DiagnosticItem diag = diags.get(0);
+        assertEquals(
+                "not-a-valid-coord",
+                code.substring(diag.getStartOffset(), diag.getEndOffset()));
+        assertTrue(diag.getMessage().contains("not-a-valid-coord"));
+    }
 }

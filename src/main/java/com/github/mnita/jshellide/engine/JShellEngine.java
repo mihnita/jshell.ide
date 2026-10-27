@@ -1,14 +1,19 @@
 package com.github.mnita.jshellide.engine;
 
+import com.github.mnita.jshellide.maven.MavenDependencyResolver;
+import com.github.mnita.jshellide.maven.MavenDependencyResolver.DepsDirective;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import jdk.jshell.Diag;
 import jdk.jshell.EvalException;
@@ -223,38 +228,155 @@ public class JShellEngine implements AutoCloseable {
         }
     }
 
-    private final List<String> classpathEntries = new ArrayList<>();
+    private final List<String> dialogClasspathEntries = new ArrayList<>();
+    private final List<String> effectiveClasspathEntries = new ArrayList<>();
+    private final MavenDependencyResolver mavenResolver;
+    private List<String> cachedDepsCoordinates = null;
+    private final Map<String, List<String>> cachedDepsJars = new LinkedHashMap<>();
+    private final Map<String, String> cachedDepsErrors = new LinkedHashMap<>();
+    private int depsResolutionCount = 0;
     private JShell completionShell;
 
     public JShellEngine() {
+        this(new MavenDependencyResolver());
+    }
+
+    public JShellEngine(MavenDependencyResolver mavenResolver) {
+        this.mavenResolver = mavenResolver != null ? mavenResolver : new MavenDependencyResolver();
         this.completionShell = createLocalJShell(new ByteArrayOutputStream(), new ByteArrayOutputStream());
     }
 
-    /** Returns an unmodifiable view of the configured classpath entries. */
+    /**
+     * Returns an unmodifiable view of the effective classpath entries
+     * (entries from the Classpath &amp; Maven dialog PLUS resolved {@code //DEPS} entries).
+     */
     public synchronized List<String> getClasspathEntries() {
-        return Collections.unmodifiableList(new ArrayList<>(classpathEntries));
+        return Collections.unmodifiableList(new ArrayList<>(effectiveClasspathEntries));
     }
 
-    /** Replaces the configured classpath entries. */
+    /**
+     * Returns an unmodifiable view of the classpath entries configured via the
+     * Classpath &amp; Maven dependencies dialog (excluding {@code //DEPS} entries).
+     */
+    public synchronized List<String> getDialogClasspathEntries() {
+        return Collections.unmodifiableList(new ArrayList<>(dialogClasspathEntries));
+    }
+
+    /** Returns the number of times individual {@code //DEPS} coordinates were resolved. */
+    public synchronized int getDepsResolutionCount() {
+        return depsResolutionCount;
+    }
+
+    /** Replaces the dialog-configured classpath entries and updates the effective classpath. */
     public synchronized void setClasspathEntries(List<String> entries) {
-        classpathEntries.clear();
+        dialogClasspathEntries.clear();
         if (entries != null) {
             for (String entry : entries) {
-                if (entry != null && !entry.isBlank() && !classpathEntries.contains(entry.trim())) {
-                    classpathEntries.add(entry.trim());
+                if (entry != null && !entry.isBlank() && !dialogClasspathEntries.contains(entry.trim())) {
+                    dialogClasspathEntries.add(entry.trim());
                 }
             }
         }
+        rebuildEffectiveClasspath();
     }
 
-    /** Adds a single classpath entry if not already present. */
+    /** Adds a single dialog-configured classpath entry if not already present. */
     public synchronized void addClasspathEntry(String path) {
         if (path != null && !path.isBlank()) {
             String trimmed = path.trim();
-            if (!classpathEntries.contains(trimmed)) {
-                classpathEntries.add(trimmed);
+            if (!dialogClasspathEntries.contains(trimmed)) {
+                dialogClasspathEntries.add(trimmed);
+                rebuildEffectiveClasspath();
             }
         }
+    }
+
+    /**
+     * Inspects {@code sourceText} for {@code //DEPS} lines on edit events.
+     * <ul>
+     *   <li>If no {@code //DEPS} entry changed since the previous check, does nothing.</li>
+     *   <li>If any {@code //DEPS} entry changed, downloads only the changed entries,
+     *       ensures all other {@code //DEPS} entries are downloaded, and updates the
+     *       effective classpath to match the dialog entries plus current {@code //DEPS} entries.</li>
+     * </ul>
+     *
+     * @return {@code true} if the {@code //DEPS} entries changed, {@code false} if unchanged
+     */
+    public synchronized boolean updateDepsFromSource(String sourceText) {
+        String safeText = sourceText != null ? sourceText : "";
+        List<DepsDirective> directives = MavenDependencyResolver.extractDepsDirectives(safeText);
+        List<String> currentCoords = new ArrayList<>(directives.size());
+        for (DepsDirective directive : directives) {
+            currentCoords.add(directive.getCoordinate());
+        }
+
+        // If the editing did not change any //DEPS entry, don't do anything
+        if (cachedDepsCoordinates != null && cachedDepsCoordinates.equals(currentCoords)) {
+            return false;
+        }
+
+        Set<String> currentCoordSet = new LinkedHashSet<>(currentCoords);
+        cachedDepsJars.keySet().retainAll(currentCoordSet);
+        cachedDepsErrors.keySet().retainAll(currentCoordSet);
+
+        for (String coord : currentCoordSet) {
+            if (!MavenDependencyResolver.isValidCoordinate(coord)) {
+                cachedDepsJars.remove(coord);
+                cachedDepsErrors.put(coord, "Invalid //DEPS Maven coordinate: " + coord);
+                continue;
+            }
+
+            List<String> existingJars = cachedDepsJars.get(coord);
+            if (existingJars != null
+                    && areAllFilesPresent(existingJars)
+                    && mavenResolver.isCoordinateDownloaded(coord)) {
+                // Already downloaded and verified on disk
+                cachedDepsErrors.remove(coord);
+                continue;
+            }
+
+            // Download only the changed (or missing) entry
+            try {
+                depsResolutionCount++;
+                List<String> resolvedJars = mavenResolver.resolveCoordinate(coord);
+                cachedDepsJars.put(coord, Collections.unmodifiableList(new ArrayList<>(resolvedJars)));
+                cachedDepsErrors.remove(coord);
+            } catch (Exception ex) {
+                cachedDepsJars.remove(coord);
+                cachedDepsErrors.put(
+                        coord, "Failed to resolve //DEPS " + coord + ": " + ex.getMessage());
+            }
+        }
+
+        cachedDepsCoordinates = new ArrayList<>(currentCoords);
+        rebuildEffectiveClasspath();
+        return true;
+    }
+
+    private void rebuildEffectiveClasspath() {
+        Set<String> combined = new LinkedHashSet<>(dialogClasspathEntries);
+        if (cachedDepsCoordinates != null) {
+            for (String coord : cachedDepsCoordinates) {
+                List<String> jars = cachedDepsJars.get(coord);
+                if (jars != null) {
+                    combined.addAll(jars);
+                }
+            }
+        }
+        effectiveClasspathEntries.clear();
+        effectiveClasspathEntries.addAll(combined);
+    }
+
+    private static boolean areAllFilesPresent(List<String> paths) {
+        if (paths == null || paths.isEmpty()) {
+            return false;
+        }
+        for (String path : paths) {
+            if (!new File(path).isFile()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -295,7 +417,7 @@ public class JShellEngine implements AutoCloseable {
 
             int sliceStart = currentOffset + leadingTrim;
             int sliceEnd = currentOffset + consumedLength - trailingTrim;
-            if (sliceEnd > sliceStart) {
+            if (sliceEnd > sliceStart && info.completeness() != Completeness.EMPTY) {
                 String evalSource = info.source();
                 if (evalSource == null || evalSource.isBlank()) {
                     evalSource = fullText.substring(sliceStart, sliceEnd);
@@ -316,16 +438,37 @@ public class JShellEngine implements AutoCloseable {
         long startNanos = System.nanoTime();
         String sourceText = fullText != null ? fullText : "";
 
+        updateDepsFromSource(sourceText);
+
         ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
         ByteArrayOutputStream errBytes = new ByteArrayOutputStream();
         JShell shell = createLocalJShell(outBytes, errBytes);
-        for (String cp : classpathEntries) {
+        for (String cp : effectiveClasspathEntries) {
             shell.addToClasspath(cp);
         }
 
         List<SnippetResult> snippetResults = new ArrayList<>();
         List<DiagnosticItem> allDiagnostics = new ArrayList<>();
         StringBuilder report = new StringBuilder();
+
+        if (!cachedDepsErrors.isEmpty()) {
+            List<DepsDirective> depsDirectives =
+                    MavenDependencyResolver.extractDepsDirectives(sourceText);
+            for (DepsDirective directive : depsDirectives) {
+                String coord = directive.getCoordinate();
+                String errMsg = cachedDepsErrors.get(coord);
+                if (errMsg != null) {
+                    allDiagnostics.add(new DiagnosticItem(
+                            directive.getStartOffset(),
+                            directive.getEndOffset(),
+                            directive.getStartOffset(),
+                            errMsg,
+                            true));
+                    report.append("[//DEPS] ").append(coord).append("\n");
+                    report.append("  [ERROR] ").append(errMsg).append("\n\n");
+                }
+            }
+        }
 
         SourceCodeAnalysis analysis = shell.sourceCodeAnalysis();
         List<SnippetSlice> slices = splitSnippetsWithAnalysis(analysis, sourceText);
@@ -561,8 +704,14 @@ public class JShellEngine implements AutoCloseable {
     private static void appendSnippetReport(
             StringBuilder report, int index, SnippetResult result) {
         String compactSource = result.getSource().strip();
-        String firstLine = compactSource.lines().findFirst().orElse("");
-        if (compactSource.lines().count() > 1) {
+        List<String> nonCommentLines = compactSource.lines()
+                .map(String::strip)
+                .filter(l -> !l.isEmpty() && !l.startsWith("//"))
+                .toList();
+        String firstLine = !nonCommentLines.isEmpty()
+                ? nonCommentLines.get(0)
+                : compactSource.lines().findFirst().orElse("");
+        if (nonCommentLines.size() > 1) {
             firstLine += " ...";
         }
         report.append("[").append(index).append("] ").append(firstLine).append("\n");
@@ -603,7 +752,7 @@ public class JShellEngine implements AutoCloseable {
         if (completionShell == null) {
             completionShell = createLocalJShell(
                     new ByteArrayOutputStream(), new ByteArrayOutputStream());
-            for (String cp : classpathEntries) {
+            for (String cp : effectiveClasspathEntries) {
                 completionShell.addToClasspath(cp);
             }
         }

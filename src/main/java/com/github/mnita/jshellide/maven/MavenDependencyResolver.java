@@ -7,7 +7,9 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.maven.repository.internal.MavenRepositorySystemUtils;
@@ -40,12 +42,40 @@ import org.eclipse.aether.util.filter.DependencyFilterUtils;
 public class MavenDependencyResolver {
 
     private static final String DEFAULT_CENTRAL_URL = "https://repo.maven.apache.org/maven2/";
+    private static final String DEPS_PREFIX = "//DEPS";
     private static final Pattern MIRROR_URL_PATTERN =
             Pattern.compile("<mirror>.*?<url>\\s*([^<\\s]+)\\s*</url>.*?</mirror>", Pattern.DOTALL);
+    private static final Pattern DEPS_TOKEN_PATTERN = Pattern.compile("[^\\s,]+");
+
+    /** Represents a single Maven dependency coordinate extracted from a {@code //DEPS} line. */
+    public static final class DepsDirective {
+        private final String coordinate;
+        private final int startOffset;
+        private final int endOffset;
+
+        public DepsDirective(String coordinate, int startOffset, int endOffset) {
+            this.coordinate = coordinate;
+            this.startOffset = startOffset;
+            this.endOffset = endOffset;
+        }
+
+        public String getCoordinate() {
+            return coordinate;
+        }
+
+        public int getStartOffset() {
+            return startOffset;
+        }
+
+        public int getEndOffset() {
+            return endOffset;
+        }
+    }
 
     private final File localRepoDir;
     private final List<RemoteRepository> remoteRepositories;
     private final RepositorySystem repoSystem;
+    private final Map<String, List<String>> resolvedCache = new ConcurrentHashMap<>();
 
     public MavenDependencyResolver() {
         this(defaultLocalRepoDir(), discoverRemoteRepositories());
@@ -55,6 +85,51 @@ public class MavenDependencyResolver {
         this.localRepoDir = localRepoDir;
         this.remoteRepositories = new ArrayList<>(remoteRepositories);
         this.repoSystem = newRepositorySystem();
+    }
+
+    /**
+     * Extracts all JBang-style {@code //DEPS} Maven coordinates declared at the beginning
+     * of lines in {@code sourceText}, along with their character offsets in the document.
+     */
+    public static List<DepsDirective> extractDepsDirectives(String sourceText) {
+        if (sourceText == null || sourceText.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<DepsDirective> directives = new ArrayList<>();
+        int length = sourceText.length();
+        int lineStart = 0;
+
+        while (lineStart < length) {
+            int lineEnd = lineStart;
+            while (lineEnd < length
+                    && sourceText.charAt(lineEnd) != '\n'
+                    && sourceText.charAt(lineEnd) != '\r') {
+                lineEnd++;
+            }
+
+            String line = sourceText.substring(lineStart, lineEnd);
+            if (line.startsWith(DEPS_PREFIX)
+                    && (line.length() == DEPS_PREFIX.length()
+                            || Character.isWhitespace(line.charAt(DEPS_PREFIX.length())))) {
+                String remainder = line.substring(DEPS_PREFIX.length());
+                Matcher matcher = DEPS_TOKEN_PATTERN.matcher(remainder);
+                while (matcher.find()) {
+                    String token = matcher.group();
+                    int tokenStart = lineStart + DEPS_PREFIX.length() + matcher.start();
+                    int tokenEnd = lineStart + DEPS_PREFIX.length() + matcher.end();
+                    directives.add(new DepsDirective(token, tokenStart, tokenEnd));
+                }
+            }
+
+            if (lineEnd < length && sourceText.charAt(lineEnd) == '\r') {
+                lineEnd++;
+            }
+            if (lineEnd < length && sourceText.charAt(lineEnd) == '\n') {
+                lineEnd++;
+            }
+            lineStart = lineEnd;
+        }
+        return directives;
     }
 
     /**
@@ -125,16 +200,28 @@ public class MavenDependencyResolver {
             return Collections.emptyList();
         }
 
-        DefaultRepositorySystemSession session = newSession();
-        DependencyFilter classpathFilter =
-                DependencyFilterUtils.classpathFilter(JavaScopes.COMPILE, JavaScopes.RUNTIME);
-
         Set<String> resolvedPaths = new LinkedHashSet<>();
+        DefaultRepositorySystemSession session = null;
+        DependencyFilter classpathFilter = null;
+
         for (String coord : coordinates) {
             if (coord == null || coord.isBlank()) {
                 continue;
             }
-            Artifact artifact = new DefaultArtifact(coord.trim());
+            String trimmed = coord.trim();
+            List<String> cached = resolvedCache.get(trimmed);
+            if (cached != null && allFilesExist(cached)) {
+                resolvedPaths.addAll(cached);
+                continue;
+            }
+
+            if (session == null) {
+                session = newSession();
+                classpathFilter =
+                        DependencyFilterUtils.classpathFilter(JavaScopes.COMPILE, JavaScopes.RUNTIME);
+            }
+
+            Artifact artifact = new DefaultArtifact(trimmed);
             CollectRequest collectRequest = new CollectRequest();
             collectRequest.setRoot(new Dependency(artifact, JavaScopes.COMPILE));
             for (RemoteRepository repo : remoteRepositories) {
@@ -144,14 +231,32 @@ public class MavenDependencyResolver {
             DependencyRequest dependencyRequest =
                     new DependencyRequest(collectRequest, classpathFilter);
             DependencyResult result = repoSystem.resolveDependencies(session, dependencyRequest);
+            List<String> singleCoordPaths = new ArrayList<>();
             for (ArtifactResult artifactResult : result.getArtifactResults()) {
                 if (artifactResult.getArtifact() != null
                         && artifactResult.getArtifact().getFile() != null) {
-                    resolvedPaths.add(artifactResult.getArtifact().getFile().getAbsolutePath());
+                    String absPath = artifactResult.getArtifact().getFile().getAbsolutePath();
+                    singleCoordPaths.add(absPath);
+                    resolvedPaths.add(absPath);
                 }
+            }
+            if (!singleCoordPaths.isEmpty()) {
+                resolvedCache.put(trimmed, Collections.unmodifiableList(singleCoordPaths));
             }
         }
         return new ArrayList<>(resolvedPaths);
+    }
+
+    private static boolean allFilesExist(List<String> paths) {
+        if (paths.isEmpty()) {
+            return false;
+        }
+        for (String path : paths) {
+            if (!new File(path).isFile()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public File getLocalRepoDir() {
