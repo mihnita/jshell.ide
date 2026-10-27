@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>name</key>
+    <string>Eclipse Light (Default)</string>
+    <key>settings</key>
+    <array>
+        <dict>
+            <key>settings</key>
+            <dict>
+                <key>background</key>
+                <string>#FFFFFF</string>
+                <key>foreground</key>
+                <string>#1F1F1F</string>
+                <key>caret</key>
+                <string>#000000</string>
+                <key>selection</key>
+                <string>#B4D5FE</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>Comment</string>
+            <key>scope</key>
+            <string>comment, comment.line, comment.block</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#3F7F5F</string>
+                <key>fontStyle</key>
+                <string>italic</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>Keyword</string>
+            <key>scope</key>
+            <string>keyword, keyword.control, storage.modifier</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#7F0055</string>
+                <key>fontStyle</key>
+                <string>bold</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>Types and Language Constants</string>
+            <key>scope</key>
+            <string>storage.type, constant.language, support.type</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#0050A0</string>
+                <key>fontStyle</key>
+                <string>bold</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>String</string>
+            <key>scope</key>
+            <string>string, string.quoted</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#2A00FF</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>Number</string>
+            <key>scope</key>
+            <string>constant.numeric</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#B45000</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>Annotation</string>
+            <key>scope</key>
+            <string>storage.type.annotation, meta.annotation, entity.other.attribute-name</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#646464</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>Function / Section Header</string>
+            <key>scope</key>
+            <string>entity.name.function, entity.name.section, markup.heading</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#3C508C</string>
+                <key>fontStyle</key>
+                <string>bold</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>Inserted / Evaluation Value</string>
+            <key>scope</key>
+            <string>markup.inserted</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#008040</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>name</key>
+            <string>Invalid / Error</string>
+            <key>scope</key>
+            <string>invalid, invalid.illegal, markup.deleted, message.error</string>
+            <key>settings</key>
+            <dict>
+                <key>foreground</key>
+                <string>#DC1414</string>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>

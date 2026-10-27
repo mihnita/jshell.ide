@@ -1,0 +1,5 @@
+target/
+
+# Eclipse generated files
+.project
+.classpath
