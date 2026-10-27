@@ -428,7 +428,7 @@ public class MainWindow {
             }
         });
 
-        editorText.addListener(SWT.KeyDown, e -> {
+        editorText.addVerifyKeyListener(e -> {
             if (isCompletionPopupVisible()) {
                 if (e.keyCode == SWT.ARROW_DOWN) {
                     e.doit = false;
@@ -436,11 +436,27 @@ public class MainWindow {
                             completionList.getItemCount() - 1,
                             completionList.getSelectionIndex() + 1);
                     completionList.setSelection(next);
+                    completionList.showSelection();
                     return;
                 } else if (e.keyCode == SWT.ARROW_UP) {
                     e.doit = false;
                     int prev = Math.max(0, completionList.getSelectionIndex() - 1);
                     completionList.setSelection(prev);
+                    completionList.showSelection();
+                    return;
+                } else if (e.keyCode == SWT.PAGE_DOWN) {
+                    e.doit = false;
+                    int next = Math.min(
+                            completionList.getItemCount() - 1,
+                            completionList.getSelectionIndex() + 10);
+                    completionList.setSelection(next);
+                    completionList.showSelection();
+                    return;
+                } else if (e.keyCode == SWT.PAGE_UP) {
+                    e.doit = false;
+                    int prev = Math.max(0, completionList.getSelectionIndex() - 10);
+                    completionList.setSelection(prev);
+                    completionList.showSelection();
                     return;
                 } else if (e.keyCode == SWT.CR || e.keyCode == SWT.LF || e.keyCode == SWT.TAB) {
                     e.doit = false;
@@ -448,6 +464,12 @@ public class MainWindow {
                     return;
                 } else if (e.keyCode == SWT.ESC) {
                     e.doit = false;
+                    hideCompletionPopup();
+                    return;
+                } else if (e.keyCode == SWT.ARROW_LEFT
+                        || e.keyCode == SWT.ARROW_RIGHT
+                        || e.keyCode == SWT.HOME
+                        || e.keyCode == SWT.END) {
                     hideCompletionPopup();
                     return;
                 }
@@ -484,6 +506,12 @@ public class MainWindow {
                         showAutoCompletePopup();
                     }
                 });
+            }
+        });
+
+        editorText.addListener(SWT.MouseDown, e -> {
+            if (isCompletionPopupVisible()) {
+                hideCompletionPopup();
             }
         });
 

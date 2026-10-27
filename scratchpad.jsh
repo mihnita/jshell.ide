@@ -1,4 +1,4 @@
-//DEPS com.ibm.icu:icu4j:80.1
+//DEPS com.ibm.icu:icu4j:79.1
 
 import java.util.*;
 import java.text.*;
